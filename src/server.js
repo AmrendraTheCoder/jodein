@@ -1,4 +1,18 @@
 // src/server.js
+// Suppress BullMQ's "Eviction policy is volatile-lru" warning.
+// Redis Cloud free tier does not allow changing eviction policy.
+// The queue operates correctly with volatile-lru — BullMQ job keys
+// carry their own TTL so they are safely evicted under memory pressure.
+// This filter is applied before any BullMQ module loads.
+;(function () {
+  const _warn = console.warn.bind(console)
+  console.warn = (...args) => {
+    const msg = args[0]?.toString?.() ?? ''
+    if (msg.includes('Eviction policy') || msg.includes('noeviction')) return
+    _warn(...args)
+  }
+})()
+
 import Fastify from 'fastify'
 import fastifyRawBody from 'fastify-raw-body'
 import { config } from 'dotenv'

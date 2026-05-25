@@ -95,7 +95,7 @@ If you're unsure, say: "Is baare mein mere paas specific document nahi hai — p
     const chat = geminiModel.startChat({
       history:          formattedHistory,
       generationConfig: { maxOutputTokens, temperature },
-      systemInstruction: fullSystemPrompt,
+      systemInstruction: { parts: [{ text: fullSystemPrompt }] },
     })
 
     const result   = await chat.sendMessage(newMessage)

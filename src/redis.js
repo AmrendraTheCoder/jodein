@@ -43,7 +43,13 @@ export async function getHistory(collegeId, userId) {
   try {
     const key     = historyKey(collegeId, userId)
     const history = await redis.get(key)
-    return history ? JSON.parse(history) : []
+    // @upstash/redis auto-deserializes JSON on get() — no JSON.parse() needed.
+    // If it's already an array (Upstash deserialized it), return as-is.
+    // If it's a string (legacy), parse it. If null, return empty array.
+    if (!history) return []
+    if (Array.isArray(history)) return history
+    if (typeof history === 'string') return JSON.parse(history)
+    return []
   } catch (err) {
     console.error('Error getting history:', err.message)
     return []   // return empty array on error — bot still works, just without memory
@@ -65,10 +71,9 @@ export async function addToHistory(collegeId, userId, role, content) {
     // This controls cost and speed — fewer messages = faster LLM responses
     const trimmed = history.slice(-MAX_HISTORY_LENGTH)
 
-    // Store back in Redis with 24-hour TTL
-    // TTL (Time To Live) = after 24 hours of no messages, history is deleted
-    // This prevents Redis from filling up with stale data
-    await redis.set(key, JSON.stringify(trimmed), { ex: 86400 }) // 86400 seconds = 24 hours
+    // Store back in Redis with 24-hour TTL.
+    // @upstash/redis serializes objects/arrays automatically — no JSON.stringify needed.
+    await redis.set(key, trimmed, { ex: 86400 }) // 86400 seconds = 24 hours
 
   } catch (err) {
     console.error('Error adding to history:', err.message)
@@ -139,7 +144,11 @@ export async function getDemoReplies(sessionId) {
     const raw = await redis.lrange(key, 0, -1)
     if (raw && raw.length > 0) {
       await redis.del(key) // consume once — like reading a notification
-      return raw.map(m => JSON.parse(m))
+      // @upstash/redis may auto-deserialize lrange items — handle both cases
+      return raw.map(m => {
+        if (typeof m === 'object' && m !== null) return m
+        try { return JSON.parse(m) } catch { return { text: String(m), timestamp: Date.now() } }
+      })
     }
     return []
   } catch (err) {

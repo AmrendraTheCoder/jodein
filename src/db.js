@@ -2,8 +2,15 @@
 // Singleton MongoDB connection — call connectDB() once at startup
 // Subsequent calls are no-ops (guards against double-connect)
 import mongoose from 'mongoose'
+import dns      from 'dns'
 import { config } from 'dotenv'
 config()
+
+// Force Node.js to use Google's public DNS for SRV record resolution.
+// Fixes "querySrv ECONNREFUSED" that occurs when the local router's DNS
+// server is unreachable or doesn't forward SRV queries correctly.
+// Safe to set globally — does not affect any other part of the app.
+dns.setServers(['8.8.8.8', '8.8.4.4'])
 
 let isConnected = false
 

@@ -808,7 +808,7 @@ const start = async () => {
     const { messageQueue } = await import('./queue.js')
     if (messageQueue) {
       const { createBullBoard } = await import('@bull-board/api')
-      const { BullMQAdapter }   = await import('@bull-board/api/bullMQAdapter.js')
+      const { BullMQAdapter }   = await import('@bull-board/api/bullMQAdapter')
       const { FastifyAdapter }  = await import('@bull-board/fastify')
 
       const serverAdapter = new FastifyAdapter()

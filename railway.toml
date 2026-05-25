@@ -1,0 +1,25 @@
+# railway.toml — Server service configuration
+# This file configures the MAIN SERVER (webhook + demo UI).
+#
+# ─────────────────────────────────────────────────────────────
+# WORKER SERVICE — manual setup required in Railway dashboard
+# ─────────────────────────────────────────────────────────────
+# The worker runs as a SEPARATE Railway service (same Git repo).
+# Steps to set it up:
+#   1. Railway Dashboard → New Service → GitHub Repo (same repo)
+#   2. Service Settings → Start Command: node src/worker.js
+#   3. Copy all env vars from the server service to the worker service
+#   4. Deploy both services
+#
+# Why separate? If the worker crashes, the server keeps receiving
+# messages and queuing them. When the worker restarts, it processes
+# the backlog. No messages are lost.
+# ─────────────────────────────────────────────────────────────
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "node src/server.js"
+healthcheckPath = "/health"
+healthcheckTimeout = 30

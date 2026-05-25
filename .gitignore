@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Secrets — NEVER commit these
+.env
+.env.local
+.env.production
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Reference repos (cloned for analysis, not source code)
+references/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/

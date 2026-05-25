@@ -1,0 +1,34 @@
+{
+  "name": "jodein",
+  "version": "1.0.0",
+  "description": "Campus Intelligence on WhatsApp",
+  "type": "module",
+  "scripts": {
+    "start":    "node src/server.js",
+    "dev":      "node --watch src/server.js",
+    "worker":   "node src/worker.js",
+    "seed":     "node scripts/seed-college.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@bull-board/api": "^7.1.5",
+    "@bull-board/fastify": "^7.1.5",
+    "@fastify/multipart": "^10.0.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "@google/generative-ai": "^0.24.1",
+    "@hokify/agenda": "^6.3.0",
+    "@upstash/redis": "^1.38.0",
+    "bullmq": "^5.77.2",
+    "csv-parse": "^6.2.1",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.8.5",
+    "fastify-raw-body": "^5.0.0",
+    "ioredis": "^5.10.1",
+    "llamaindex": "^0.12.1",
+    "mongoose": "^9.6.2",
+    "pdf-parse": "^2.4.5",
+    "zod": "^4.4.3"
+  }
+}

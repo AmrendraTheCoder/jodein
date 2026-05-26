@@ -4,10 +4,14 @@
   "description": "Campus Intelligence on WhatsApp",
   "type": "module",
   "scripts": {
-    "start":    "node src/server.js",
-    "dev":      "node --watch src/server.js",
-    "worker":   "node src/worker.js",
-    "seed":     "node scripts/seed-college.js"
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "worker": "node src/worker.js",
+    "worker:ingest": "node src/worker.js ingest",
+    "worker:notify": "node src/worker.js notify",
+    "seed": "node scripts/seed-college.js",
+    "test": "node --test test/app.test.js",
+    "test:load": "node scripts/load-test.js"
   },
   "keywords": [],
   "author": "",
@@ -15,6 +19,8 @@
   "dependencies": {
     "@bull-board/api": "^7.1.5",
     "@bull-board/fastify": "^7.1.5",
+    "@fastify/cors": "^11.2.0",
+    "@fastify/helmet": "^13.0.2",
     "@fastify/multipart": "^10.0.0",
     "@fastify/rate-limit": "^10.3.0",
     "@google/generative-ai": "^0.24.1",
@@ -30,5 +36,9 @@
     "mongoose": "^9.6.2",
     "pdf-parse": "^2.4.5",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@jest/globals": "^30.4.1",
+    "jest": "^30.4.2"
   }
 }

@@ -148,30 +148,64 @@ export async function sendTypingIndicator(toNumber, incomingMessageId, credentia
 // Verify that a webhook request is genuinely from Meta
 // Uses HMAC-SHA256 signature verification
 export function verifyWebhookSignature(rawBody, signatureHeader) {
-  if (!signatureHeader) {
-    console.warn('No signature header — rejecting request')
+  try {
+    if (!process.env.META_APP_SECRET) {
+      console.error('[Security] META_APP_SECRET is not configured in environment variables')
+      return false
+    }
+
+    if (!signatureHeader) {
+      console.warn('[Security] No signature header — rejecting request')
+      return false
+    }
+
+    if (!rawBody) {
+      console.warn('[Security] Empty raw body — rejecting request')
+      return false
+    }
+
+    // Header format: "sha256=abc123..."
+    const parts = signatureHeader.split('=')
+    if (parts.length !== 2) {
+      console.warn('[Security] Invalid signature header format')
+      return false
+    }
+
+    const [algorithm, signature] = parts
+
+    if (algorithm !== 'sha256') {
+      console.warn('[Security] Unexpected signature algorithm:', algorithm)
+      return false
+    }
+
+    if (!signature) {
+      console.warn('[Security] Signature value is empty')
+      return false
+    }
+
+    // Compute expected signature using your app secret
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.META_APP_SECRET)
+      .update(rawBody, 'utf8')
+      .digest('hex')
+
+    // Use timingSafeEqual to prevent timing attacks
+    const signatureBuffer = Buffer.from(signature, 'hex')
+    const expectedBuffer  = Buffer.from(expectedSignature, 'hex')
+
+    // timingSafeEqual throws an error if lengths do not match.
+    // Early return is safe here because the length of the expected digest is always 32 bytes (64 hex characters),
+    // which is public knowledge. However, to keep code robust and prevent any crash, we compare lengths.
+    if (signatureBuffer.length !== expectedBuffer.length) {
+      console.warn('[Security] Signature length mismatch')
+      return false
+    }
+
+    return crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
+
+  } catch (err) {
+    // Handle error gracefully and never leak credentials or internal paths in logs
+    console.error('[Security] Webhook signature verification error:', err.message)
     return false
   }
-
-  // Header format: "sha256=abc123..."
-  const [algorithm, signature] = signatureHeader.split('=')
-
-  if (algorithm !== 'sha256') {
-    console.warn('Unexpected signature algorithm:', algorithm)
-    return false
-  }
-
-  // Compute expected signature using your app secret
-  const expectedSignature = crypto
-    .createHmac('sha256', process.env.META_APP_SECRET)
-    .update(rawBody, 'utf8')
-    .digest('hex')
-
-  // Use timingSafeEqual to prevent timing attacks
-  const signatureBuffer = Buffer.from(signature,          'hex')
-  const expectedBuffer  = Buffer.from(expectedSignature,  'hex')
-
-  if (signatureBuffer.length !== expectedBuffer.length) return false
-
-  return crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
 }

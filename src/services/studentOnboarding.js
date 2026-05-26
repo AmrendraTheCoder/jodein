@@ -1,85 +1,60 @@
 // src/services/studentOnboarding.js
-// Bulk student ingestion from CSV file.
+// Bulk student ingestion from CSV file using streaming.
 //
 // Usage: POST /admin/ingest-students/:collegeId with CSV file
 // CSV format (share this template with colleges):
-//   studentId,name,branch,year,section,phone,parentPhone
+//   rollNumber,name,branch,year,section,phone,parentPhone
 //   2022CSE001,Rahul Sharma,CSE,3,A,919876543210,919876540001
 //
 // Rules colleges must follow:
 //   - Phone numbers with country code without + (91XXXXXXXXXX)
-//   - studentId must be unique within the college
+//   - rollNumber must be unique within the college
 //   - CSV must be UTF-8 encoded (important for Hindi names)
 
-import { parse }   from 'csv-parse/sync'
 import fs          from 'fs'
 import { Student } from '../models/Student.js'
+import { parseStudentCSVStream } from './csv.js'
 
 /**
- * Ingest a student CSV file for a college.
+ * Ingest a student CSV file for a college using streaming parser.
  * Upserts each student (insert new, update existing).
  * Queues activation messages for any student not yet activated.
  *
- * Returns: { created, updated, errors, failed[] }
+ * @param {string} collegeId - College ID for multi-tenant isolation.
+ * @param {string} csvFilePath - Path to the temporary CSV file.
+ * @param {Object} messageQueue - BullMQ message queue.
+ * @returns {Promise<{ created: number, updated: number, errors: number, failed: Array<Object> }>} Summary.
  */
 export async function ingestStudentCSV(collegeId, csvFilePath, messageQueue) {
   console.log(`[Onboarding] Starting CSV ingestion for ${collegeId}`)
-
-  // Read and parse CSV
-  const fileContent = fs.readFileSync(csvFilePath, 'utf-8')
-  const rows = parse(fileContent, {
-    columns:          true,   // use first row as headers
-    skip_empty_lines: true,
-    trim:             true,   // strip whitespace from all values
-    bom:              true,   // handle Excel UTF-8 BOM header
-  })
-
-  console.log(`[Onboarding] Parsed ${rows.length} students from CSV`)
 
   let created  = 0
   let updated  = 0
   let errors   = 0
   const failed = []
 
-  for (const row of rows) {
-    try {
-      // Validate required fields
-      if (!row.studentId || !row.phone) {
-        failed.push({ row, reason: 'Missing studentId or phone' })
-        errors++
-        continue
-      }
-
-      // Normalize and validate phone numbers
-      const phone       = normalizePhone(row.phone)
-      const parentPhone = row.parentPhone ? normalizePhone(row.parentPhone) : null
-
-      if (!phone) {
-        failed.push({ row, reason: `Invalid phone format: "${row.phone}"` })
-        errors++
-        continue
-      }
-
+  try {
+    // Process student on the fly as they are streamed and mapped
+    const processStudent = async (studentData) => {
       // Upsert: insert or update without overwriting activated status
-      const existing = await Student.findOne({ collegeId, studentId: row.studentId })
+      const existing = await Student.findOne({ collegeId, studentId: studentData.studentId })
 
       const updateData = {
-        name:        row.name        || existing?.name,
-        branch:      row.branch      || existing?.branch,
-        year:        row.year        ? parseInt(row.year) : existing?.year,
-        section:     row.section     || existing?.section,
-        parentPhone: parentPhone     || existing?.parentPhone,
+        name:        studentData.name        || existing?.name,
+        branch:      studentData.branch      || existing?.branch,
+        year:        studentData.year        || existing?.year,
+        section:     studentData.section     || existing?.section,
+        parentPhone: studentData.parentPhone || existing?.parentPhone,
       }
 
-      // Only update phone if student isn't already activated
-      // (don't disconnect an already-activated student)
+      // Only update student's own phone if they aren't already activated
       if (!existing?.activated) {
-        updateData.phone = phone
+        updateData.phone = studentData.phone || existing?.phone
       }
 
       const result = await Student.findOneAndUpdate(
-        { collegeId, studentId: row.studentId },
-        { $set: updateData, $setOnInsert: { collegeId, studentId: row.studentId, activated: false } },
+        { collegeId, studentId: studentData.studentId },
+        { $set: updateData, $setOnInsert: { collegeId, studentId: studentData.studentId, activated: false } },
         { upsert: true, new: true }
       )
 
@@ -93,42 +68,45 @@ export async function ingestStudentCSV(collegeId, csvFilePath, messageQueue) {
       // Stagger by 200ms per student to avoid WhatsApp rate limits
       if (!result.activated && messageQueue) {
         const delay = (created + updated) * 200
-        await messageQueue.add('send-activation', {
-          collegeId,
-          studentPhone: phone,
-          studentName:  row.name,
-          studentId:    row.studentId,
-        }, {
-          delay,
-          jobId: `activation-${collegeId}-${row.studentId}`,  // dedup: won't re-queue if already exists
-        })
+        // Use student's phone if provided, otherwise fallback to parentPhone for activation invite
+        const invitePhone = studentData.phone || studentData.parentPhone
+
+        if (invitePhone) {
+          await messageQueue.add('send-activation', {
+            collegeId,
+            studentPhone: invitePhone,
+            studentName:  studentData.name,
+            studentId:    studentData.studentId,
+          }, {
+            delay,
+            jobId: `activation-${collegeId}-${studentData.studentId}`,  // dedup: won't re-queue if already exists
+          })
+        } else {
+          console.warn(`[Onboarding] Skipping activation invite queue for ${studentData.studentId}: no phone or parentPhone`)
+        }
       }
-
-    } catch (err) {
-      console.error(`[Onboarding] Error processing student ${row.studentId}:`, err.message)
-      failed.push({ row, reason: err.message })
-      errors++
     }
-  }
 
-  // Clean up temp file
-  try { fs.unlinkSync(csvFilePath) } catch (_) {}
+    const parseResult = await parseStudentCSVStream(csvFilePath, collegeId, processStudent)
+    
+    // Add failed rows from parsing phase
+    if (parseResult.failedRows && parseResult.failedRows.length > 0) {
+      parseResult.failedRows.forEach(f => {
+        failed.push(f)
+        errors++
+      })
+    }
+
+  } catch (err) {
+    console.error(`[Onboarding] CSV stream ingestion error for ${collegeId}:`, err.message)
+    errors++
+    failed.push({ reason: `Stream parsing error: ${err.message}` })
+  } finally {
+    // Clean up temp file
+    try { fs.unlinkSync(csvFilePath) } catch (_) {}
+  }
 
   const summary = { created, updated, errors, failed }
   console.log(`[Onboarding] Done for ${collegeId}:`, summary)
   return summary
-}
-
-/**
- * Normalize phone number to E.164 without + (91XXXXXXXXXX format).
- * Handles: 9876543210, +919876543210, 919876543210, 0919876543210
- */
-function normalizePhone(raw) {
-  const digits = raw.toString().replace(/\D/g, '')  // strip all non-digits
-
-  if (digits.length === 10)                              return `91${digits}`    // 10-digit → add 91
-  if (digits.length === 12 && digits.startsWith('91'))   return digits           // already 91XXXXXXXXXX
-  if (digits.length === 13 && digits.startsWith('091'))  return digits.slice(1)  // 091XXXXXXXXXX → 91XXXXXXXXXX
-
-  return null  // unrecognized format
 }

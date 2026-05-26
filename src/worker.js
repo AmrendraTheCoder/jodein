@@ -28,159 +28,206 @@ await connectDB()
 
 console.log('[Worker] Starting — connected to MongoDB ✅')
 
+// Determine which workers to run based on command line arguments or environment
+const workerType = process.env.WORKER_TYPE || process.argv[2] || 'all'
+console.log(`[Worker] Execution mode: ${workerType}`)
+
+const runIngest = workerType === 'all' || workerType === 'ingest'
+const runNotify = workerType === 'all' || workerType === 'notify'
+
 // Commands that reset a user's conversation history
 const RESET_COMMANDS = ['reset', '/reset', 'start over', '/start', 'clear', '/clear', 'naya shuru']
 
+let worker = null
+let activationWorker = null
+let attendanceWorker = null
+
 // ─── MAIN MESSAGE PROCESSOR ──────────────────────────────────────────────────
-const worker = new Worker(
-  'incoming-messages',
+if (runIngest) {
+  console.log('[Worker] Initializing message ingest worker for queue: incoming-messages...')
+  worker = new Worker(
+    'incoming-messages',
 
-  async (job) => {
-    // ─── ROUTING: Skip jobs meant for other processors ────────────────────
-    if (job.name === 'send-activation' || job.name === 'attendance-alert') return
+    async (job) => {
+      // ─── ROUTING: Skip jobs meant for other processors ────────────────────
+      if (job.name === 'send-activation' || job.name === 'attendance-alert') return
 
-    const { collegeId, parsed } = job.data
-    const startTime = Date.now()
+      const { collegeId, parsed } = job.data
+      const startTime = Date.now()
 
-    console.log(`[Worker] Processing "${job.name}" from ${parsed.name || 'Unknown'} at ${collegeId}`)
+      console.log(`[Worker] Processing "${job.name}" from ${parsed.name || 'Unknown'} at ${collegeId}`)
 
-    // ─── STEP 1: Load college config ─────────────────────────────────────────
-    // PATTERN 6 (WAHA): each college has independent credentials and config
-    const college = await getCollegeConfig(collegeId)
+      // ─── STEP 1: Load college config ─────────────────────────────────────────
+      // PATTERN 6 (WAHA): each college has independent credentials and config
+      const college = await getCollegeConfig(collegeId)
 
-    if (!college) {
-      console.warn(`[Worker] No active config for college: ${collegeId} — dropping message`)
-      return  // don't retry — config issue is not transient
-    }
+      if (!college) {
+        console.warn(`[Worker] No active config for college: ${collegeId} — dropping message`)
+        return  // don't retry — config issue is not transient
+      }
 
-    // ─── STEP 2: Handle reset command ────────────────────────────────────────
-    if (RESET_COMMANDS.includes(parsed.text.trim().toLowerCase())) {
-      await clearHistory(collegeId, parsed.from)
-      await sendTextMessage(
-        parsed.from,
-        '✅ Conversation cleared! Fresh start kar lete hain.\n\nAap kya jaanna chahte hain? 😊',
-        college.whatsapp
-      )
-      return
-    }
-
-    // ─── STEP 3: Look up student ──────────────────────────────────────────────
-    const student = await Student.findOne({
-      collegeId,
-      phone:     parsed.from,
-      activated: true,
-    })
-
-    // ─── STEP 4: Activation flow for unregistered students ───────────────────
-    if (!student) {
-      if (looksLikeStudentId(parsed.text)) {
-        // Student is trying to activate — attempt it
-        const result = await attemptActivation(collegeId, parsed.from, parsed.text)
-        await sendTextMessage(parsed.from, result.message, college.whatsapp)
-
-        // Log activation attempt
-        MessageLog.create({
-          collegeId,
-          userId:       parsed.from,
-          direction:    'out',
-          message:      result.message,
-          isActivation: true,
-          model:        college.ai.model,
-        }).catch(err => console.error('[Worker] Log error (non-critical):', err.message))
-
-        return
-      } else {
-        // Not activated and not sending a student ID — prompt them
-        const prompt = `Namaste! 👋\n\nMain *${college.name}* ka campus assistant hun.\n\nShuru karne ke liye apna *Student ID* bhejein.\nExample: \`2022CSE001\`\n\nCollege ne aapko ek activation message bheja tha — wahan se ID check karein.`
-        await sendTextMessage(parsed.from, prompt, college.whatsapp)
+      // ─── STEP 2: Handle reset command ────────────────────────────────────────
+      if (RESET_COMMANDS.includes(parsed.text.trim().toLowerCase())) {
+        await clearHistory(collegeId, parsed.from)
+        await sendTextMessage(
+          parsed.from,
+          '✅ Conversation cleared! Fresh start kar lete hain.\n\nAap kya jaanna chahte hain? 😊',
+          college.whatsapp
+        )
         return
       }
-    }
 
-    // ─── STEP 5: Show typing indicator ───────────────────────────────────────
-    // PATTERN 6 (WAHA): use college-specific WhatsApp credentials
-    await sendTypingIndicator(parsed.from, parsed.messageId, college.whatsapp)
+      // ─── STEP 3: Look up student ──────────────────────────────────────────────
+      const student = await Student.findOne({
+        collegeId,
+        phone:     parsed.from,
+        activated: true,
+      })
 
-    // ─── STEP 6: Handle direct commands (faster than LLM) ────────────────────
-    const textLower = parsed.text.trim().toLowerCase()
+      // ─── STEP 4: Activation flow for unregistered students ───────────────────
+      if (!student) {
+        if (looksLikeStudentId(parsed.text)) {
+          // Student is trying to activate — attempt it
+          const result = await attemptActivation(collegeId, parsed.from, parsed.text)
+          await sendTextMessage(parsed.from, result.message, college.whatsapp)
 
-    if (textLower === 'attendance' || textLower === '/attendance') {
-      const msg = `📊 *Aapki Attendance — ${new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}*\n\n${college.features.attendanceAlerts ? 'Attendance alerts activate hain. Absent hone pe notification aayega.' : 'Detailed attendance ke liye college portal check karein.'}\n\nAur kuch poochna hai?`
-      await sendTextMessage(parsed.from, msg, college.whatsapp)
-      return
-    }
+          // Log activation attempt
+          MessageLog.create({
+            collegeId,
+            userId:       parsed.from,
+            direction:    'out',
+            message:      result.message,
+            isActivation: true,
+            model:        college.ai.model,
+          }).catch(err => console.error('[Worker] Log error (non-critical):', err.message))
 
-    // ─── STEP 7: Build personalized system prompt ─────────────────────────────
-    let systemPrompt = college.ai.systemPrompt
+          return
+        } else {
+          // Not activated and not sending a student ID — prompt them
+          const prompt = `Namaste! 👋\n\nMain *\${college.name}* ka campus assistant hun.\n\nShuru karne ke liye apna *Student ID* bhejein.\nExample: \`2022CSE001\`\n\nCollege ne aapko ek activation message bheja tha — wahan se ID check karein.`
+          await sendTextMessage(parsed.from, prompt, college.whatsapp)
+          return
+        }
+      }
 
-    if (student) {
-      systemPrompt += `\n\nStudent context:\nName:    ${student.name}\nBranch:  ${student.branch}\nYear:    Year ${student.year}\nSection: Section ${student.section}\nID:      ${student.studentId}\n\nPersonalize answers for this student's branch and year when relevant.`
-    }
+      // ─── STEP 5: Show typing indicator ───────────────────────────────────────
+      // PATTERN 6 (WAHA): use college-specific WhatsApp credentials
+      await sendTypingIndicator(parsed.from, parsed.messageId, college.whatsapp)
 
-    // ─── STEP 8: RAG retrieval (Step 17-18) ──────────────────────────────────
-    // PATTERN 8 (Flowise): retrieve context only if feature is enabled
-    // Returns null gracefully if Qdrant is unavailable or collection is empty
-    let ragContext = null
-    let hadRagContext = false
+      // ─── STEP 6: Handle direct commands (faster than LLM) ────────────────────
+      const textLower = parsed.text.trim().toLowerCase()
 
-    if (college.features.ragEnabled) {
-      ragContext    = await retrieveContext(collegeId, parsed.text)
-      hadRagContext = ragContext !== null
-    }
+      if (textLower === 'attendance' || textLower === '/attendance') {
+        const msg = `📊 *Aapki Attendance — \${new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}*\n\n\${college.features.attendanceAlerts ? 'Attendance alerts activate hain. Absent hone pe notification aayega.' : 'Detailed attendance ke liye college portal check karein.'}\n\nAur kuch poochna hai?`
+        await sendTextMessage(parsed.from, msg, college.whatsapp)
+        return
+      }
 
-    // ─── STEP 9: Get conversation history ────────────────────────────────────
-    const history = await getHistory(collegeId, parsed.from)
+      // ─── STEP 7: Build personalized system prompt ─────────────────────────────
+      let systemPrompt = college.ai.systemPrompt
 
-    // ─── STEP 10: Generate reply ──────────────────────────────────────────────
-    const aiReply = await generateReply(
-      history,
-      parsed.text,
-      systemPrompt,
-      college.ai,    // per-college model/temperature/maxTokens/contextWindow
-      ragContext     // null if RAG disabled or no relevant context found
+      if (student) {
+        systemPrompt += `\n\nStudent context:\nName:    \${student.name}\nBranch:  \${student.branch}\nYear:    Year \${student.year}\nSection: Section \${student.section}\nID:      \${student.studentId}\n\nPersonalize answers for this student's branch and year when relevant.`
+      }
+
+      // ─── STEP 8: RAG retrieval (Step 17-18) ──────────────────────────────────
+      // PATTERN 8 (Flowise): retrieve context only if feature is enabled
+      // Returns null gracefully if Qdrant is unavailable or collection is empty
+      let ragContext = null
+      let hadRagContext = false
+
+      if (college.features.ragEnabled) {
+        ragContext    = await retrieveContext(collegeId, parsed.text)
+        hadRagContext = ragContext !== null
+      }
+
+      // ─── STEP 9: Get conversation history ────────────────────────────────────
+      const history = await getHistory(collegeId, parsed.from)
+
+      // ─── STEP 10: Generate reply ──────────────────────────────────────────────
+      const aiReply = await generateReply(
+        history,
+        parsed.text,
+        systemPrompt,
+        college.ai,    // per-college model/temperature/maxTokens/contextWindow
+        ragContext     // null if RAG disabled or no relevant context found
+      )
+
+      // ─── STEP 11: Send reply ──────────────────────────────────────────────────
+      await sendTextMessage(parsed.from, aiReply, college.whatsapp)
+
+      // ─── STEP 12: Save to history ─────────────────────────────────────────────
+      await addToHistory(collegeId, parsed.from, 'user',      parsed.text)
+      await addToHistory(collegeId, parsed.from, 'assistant', aiReply)
+
+      // ─── STEP 13: Log for analytics (non-blocking) ───────────────────────────
+      MessageLog.create({
+        collegeId,
+        userId:         parsed.from,
+        studentId:      student?.studentId,
+        direction:      'in',
+        message:        parsed.text.slice(0, 500),  // truncate very long messages
+        responseTimeMs: Date.now() - startTime,
+        model:          college.ai.model,
+        hadRagContext,
+      }).catch(err => console.error('[Worker] Log error (non-critical):', err.message))
+
+      console.log(`[Worker] ✅ Replied to \${parsed.from} in \${Date.now() - startTime}ms`)
+    },
+
+    { connection, concurrency: 5 }
+  )
+
+  worker.on('completed', job => {
+    console.log(`[Worker] Job ${job.id} (${job.name}) completed`)
+  })
+
+  // PATTERN 13 (from Baileys MessageRetryManager):
+  // Only send user-facing "sorry" message on the FINAL failed attempt.
+  // On earlier attempts, BullMQ silently retries — user doesn't need to know.
+  worker.on('failed', async (job, err) => {
+    const isFinalAttempt = job.attemptsMade >= (job.opts.attempts || 3)
+    console.error(
+      `[Worker] Job ${job.id} failed (attempt ${job.attemptsMade}/${job.opts.attempts}): ${err.message}`
     )
 
-    // ─── STEP 11: Send reply ──────────────────────────────────────────────────
-    await sendTextMessage(parsed.from, aiReply, college.whatsapp)
+    if (isFinalAttempt && job.name === 'process-message' && job.data?.parsed?.from) {
+      try {
+        await sendTextMessage(
+          job.data.parsed.from,
+          'Sorry, abhi Jodein mein kuch technical issue hai 🙏\nPlease thodi der baad try karein.\n\nAgar yeh baar baar ho toh apne college admin ko batayein.',
+          null  // use env fallback credentials
+        )
+      } catch (sendErr) {
+        console.error('[Worker] Could not send final-attempt fallback message:', sendErr.message)
+      }
+    }
+  })
 
-    // ─── STEP 12: Save to history ─────────────────────────────────────────────
-    await addToHistory(collegeId, parsed.from, 'user',      parsed.text)
-    await addToHistory(collegeId, parsed.from, 'assistant', aiReply)
+  worker.on('error', err => {
+    console.error('[Worker] Worker error:', err)
+  })
+}
 
-    // ─── STEP 13: Log for analytics (non-blocking) ───────────────────────────
-    MessageLog.create({
-      collegeId,
-      userId:         parsed.from,
-      studentId:      student?.studentId,
-      direction:      'in',
-      message:        parsed.text.slice(0, 500),  // truncate very long messages
-      responseTimeMs: Date.now() - startTime,
-      model:          college.ai.model,
-      hadRagContext,
-    }).catch(err => console.error('[Worker] Log error (non-critical):', err.message))
+// ─── ACTIVATION & ATTENDANCE PROCESSOR ────────────────────────────────────────
+if (runNotify) {
+  console.log('[Worker] Initializing notify workers for queue: incoming-messages...')
 
-    console.log(`[Worker] ✅ Replied to ${parsed.from} in ${Date.now() - startTime}ms`)
-  },
+  // Sends the initial onboarding message to each student after CSV upload
+  // Lower concurrency (3) to stay within WhatsApp rate limits
+  activationWorker = new Worker(
+    'incoming-messages',
 
-  { connection, concurrency: 5 }
-)
+    async (job) => {
+      if (job.name !== 'send-activation') return
 
-// ─── ACTIVATION MESSAGE SENDER ────────────────────────────────────────────────
-// Sends the initial onboarding message to each student after CSV upload
-// Lower concurrency (3) to stay within WhatsApp rate limits
-const activationWorker = new Worker(
-  'incoming-messages',
+      const { collegeId, studentPhone, studentName, studentId } = job.data
+      const college = await getCollegeConfig(collegeId)
+      if (!college) return
 
-  async (job) => {
-    if (job.name !== 'send-activation') return
+      const firstName = studentName?.split(' ')[0] || 'Student'
 
-    const { collegeId, studentPhone, studentName, studentId } = job.data
-    const college = await getCollegeConfig(collegeId)
-    if (!college) return
-
-    const firstName = studentName?.split(' ')[0] || 'Student'
-
-    const message = `Hi ${firstName}! 👋
+      const message = `Hi ${firstName}! 👋
 
 Aapka *${college.name}* ka WhatsApp campus assistant ready hai.
 
@@ -195,37 +242,36 @@ Example: \`${studentId}\`
 
 — Jodein, ${college.name} 🎓`
 
-    await sendTextMessage(studentPhone, message, college.whatsapp)
-    console.log(`[Activation] Sent to ${studentPhone} (${studentName})`)
-  },
+      await sendTextMessage(studentPhone, message, college.whatsapp)
+      console.log(`[Activation] Sent to ${studentPhone} (${studentName})`)
+    },
 
-  { connection, concurrency: 3 }
-)
+    { connection, concurrency: 3 }
+  )
 
-// ─── ATTENDANCE ALERT SENDER ──────────────────────────────────────────────────
-// Sends absence notifications to both student and parent
-// High concurrency (10) since these are simple send operations
-const attendanceWorker = new Worker(
-  'incoming-messages',
+  // Sends absence notifications to both student and parent
+  // High concurrency (10) since these are simple send operations
+  attendanceWorker = new Worker(
+    'incoming-messages',
 
-  async (job) => {
-    if (job.name !== 'attendance-alert') return
+    async (job) => {
+      if (job.name !== 'attendance-alert') return
 
-    const {
-      collegeId, studentName, studentId,
-      phone, parentPhone, date, subject, period, markedBy
-    } = job.data
+      const {
+        collegeId, studentName, studentId,
+        phone, parentPhone, date, subject, period, markedBy
+      } = job.data
 
-    const college = await getCollegeConfig(collegeId)
-    if (!college) return
+      const college = await getCollegeConfig(collegeId)
+      if (!college) return
 
-    // Format date: "2024-01-15" → "Monday, 15 January 2024"
-    const formattedDate = new Date(date).toLocaleDateString('en-IN', {
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-    })
+      // Format date: "2024-01-15" → "Monday, 15 January 2024"
+      const formattedDate = new Date(date).toLocaleDateString('en-IN', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      })
 
-    // ─── Message to PARENT ────────────────────────────────────────────────
-    const parentMessage =
+      // ─── Message to PARENT ────────────────────────────────────────────────
+      const parentMessage =
 `📋 *Attendance Alert — ${college.name}*
 
 *Student:* ${studentName} (${studentId})
@@ -236,66 +282,59 @@ Agar koi samasya hai, please apne ward se baat karein ya college se contact kare
 
 — Jodein, ${college.name}`
 
-    // ─── Message to STUDENT ───────────────────────────────────────────────
-    const studentMessage =
+      // ─── Message to STUDENT ───────────────────────────────────────────────
+      const studentMessage =
 `📋 *Attendance Update*
 
 ${formattedDate} ko *${subject || 'ek class'}* mein aapki attendance absent mark ki gayi hai.${period ? ` (Period ${period})` : ''}
 
 Agar yeh galat hai, apne faculty se confirm karein. ✅`
 
-    // Send to parent first (most important)
-    if (parentPhone) {
-      await sendTextMessage(parentPhone, parentMessage, college.whatsapp)
-    }
+      // Send to parent first (most important)
+      if (parentPhone) {
+        await sendTextMessage(parentPhone, parentMessage, college.whatsapp)
+      }
 
-    // Send to student
-    if (phone) {
-      await sendTextMessage(phone, studentMessage, college.whatsapp)
-    }
+      // Send to student
+      if (phone) {
+        await sendTextMessage(phone, studentMessage, college.whatsapp)
+      }
 
-    console.log(`[Alert] Sent attendance alert for ${studentName} (${studentId}) at ${collegeId}`)
-  },
+      console.log(`[Alert] Sent attendance alert for ${studentName} (${studentId}) at ${collegeId}`)
+    },
 
-  { connection, concurrency: 10 }
-)
-
-// ─── WORKER EVENT HANDLERS ────────────────────────────────────────────────────
-
-worker.on('completed', job => {
-  console.log(`[Worker] Job ${job.id} (${job.name}) completed`)
-})
-
-// PATTERN 13 (from Baileys MessageRetryManager):
-// Only send user-facing "sorry" message on the FINAL failed attempt.
-// On earlier attempts, BullMQ silently retries — user doesn't need to know.
-worker.on('failed', async (job, err) => {
-  const isFinalAttempt = job.attemptsMade >= (job.opts.attempts || 3)
-  console.error(
-    `[Worker] Job ${job.id} failed (attempt ${job.attemptsMade}/${job.opts.attempts}): ${err.message}`
+    { connection, concurrency: 10 }
   )
 
-  if (isFinalAttempt && job.name === 'process-message' && job.data?.parsed?.from) {
-    try {
-      await sendTextMessage(
-        job.data.parsed.from,
-        'Sorry, abhi Jodein mein kuch technical issue hai 🙏\nPlease thodi der baad try karein.\n\nAgar yeh baar baar ho toh apne college admin ko batayein.',
-        null  // use env fallback credentials
-      )
-    } catch (sendErr) {
-      console.error('[Worker] Could not send final-attempt fallback message:', sendErr.message)
-    }
-  }
-})
+  activationWorker.on('completed', job => {
+    console.log(`[ActivationWorker] Job ${job.id} completed`)
+  })
 
-worker.on('error', err => {
-  console.error('[Worker] Worker error:', err)
-})
+  attendanceWorker.on('completed', job => {
+    console.log(`[AttendanceWorker] Job ${job.id} completed`)
+  })
 
-activationWorker.on('failed', (job, err) => {
-  console.error(`[ActivationWorker] Job ${job.id} failed:`, err.message)
-})
+  activationWorker.on('failed', (job, err) => {
+    console.error(`[ActivationWorker] Job ${job.id} failed:`, err.message)
+  })
 
-attendanceWorker.on('failed', (job, err) => {
-  console.error(`[AttendanceWorker] Job ${job.id} failed:`, err.message)
-})
+  attendanceWorker.on('failed', (job, err) => {
+    console.error(`[AttendanceWorker] Job ${job.id} failed:`, err.message)
+  })
+}
+
+// ─── GRACEFUL SHUTDOWN ────────────────────────────────────────────────────────
+const shutdown = async () => {
+  console.log('\n[Worker] Shutting down gracefully — closing all workers...')
+  const closures = []
+  if (worker) closures.push(worker.close())
+  if (activationWorker) closures.push(activationWorker.close())
+  if (attendanceWorker) closures.push(attendanceWorker.close())
+  
+  await Promise.all(closures)
+  console.log('[Worker] All workers closed successfully. Exiting process. 👋\n')
+  process.exit(0)
+}
+
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)

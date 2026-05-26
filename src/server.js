@@ -32,6 +32,13 @@ import os from 'os'
 import path from 'path'
 import fs from 'fs'
 
+// Cybersecurity sanitization and validation imports
+import {
+  fastifySanitizerHook,
+  timingSafeCompare,
+  sanitizeUserMessage
+} from './middleware/sanitizer.js'
+
 config()
 
 // PATTERN 9 (from pino analysis): Redact sensitive fields from ALL logs automatically
@@ -55,6 +62,9 @@ const app = Fastify({
 // Register raw body plugin for webhook signature verification
 // This gives us access to req.rawBody (the unparsed request body bytes)
 await app.register(fastifyRawBody, { field: 'rawBody', global: false, encoding: 'utf8' })
+
+// Register the global NoSQL and input sanitizer hook
+app.addHook('preValidation', fastifySanitizerHook())
 
 // PATTERN 4+5 (from fastify-rate-limit analysis): Per-collegeId rate limiting
 // Lua-script-based atomic Redis increment — prevents thundering herd across instances
@@ -128,10 +138,13 @@ app.get('/webhook/:collegeId', async (req, reply) => {
   const challenge = req.query['hub.challenge']
 
   app.log.info(`Webhook verification request for college: ${collegeId}`)
-  app.log.info(`Mode: ${mode}, Token matches: ${token === process.env.WEBHOOK_VERIFY_TOKEN}`)
+
+  // Use timing-safe string comparison to prevent token side-channel timing leaks
+  const isTokenValid = timingSafeCompare(token, process.env.WEBHOOK_VERIFY_TOKEN)
+  app.log.info(`Mode: ${mode}, Token matches: ${isTokenValid}`)
 
   // Validate
-  if (mode === 'subscribe' && token === process.env.WEBHOOK_VERIFY_TOKEN) {
+  if (mode === 'subscribe' && isTokenValid) {
     app.log.info('Webhook verified successfully')
     // CRITICAL: respond with just the challenge number, nothing else
     return reply.status(200).send(challenge)
@@ -176,6 +189,9 @@ app.post('/webhook/:collegeId', {
   // Parse the message
   const parsed = parseIncomingMessage(req.body)
   if (!parsed) return
+
+  // Sanitize user message content strictly to strip control characters
+  parsed.text = sanitizeUserMessage(parsed.text)
 
   // STEP 2: Check deduplication
   const alreadyProcessed = await isMessageProcessed(parsed.messageId)
@@ -619,7 +635,10 @@ app.post('/demo/chat', async (req, reply) => {
   try {
     const RESET_COMMANDS = ['reset', '/reset', 'start over', '/start', 'clear', '/clear', 'naya shuru']
 
-    if (RESET_COMMANDS.includes(message.trim().toLowerCase())) {
+    // Sanitize user message input
+    const cleanMessage = sanitizeUserMessage(message)
+
+    if (RESET_COMMANDS.includes(cleanMessage.toLowerCase())) {
       await clearHistory(collegeId, sessionId)
       // storeDemoReply is triggered by sendTextMessage in demo mode
       const { sendTextMessage } = await import('./whatsapp.js')
@@ -635,14 +654,14 @@ app.post('/demo/chat', async (req, reply) => {
     const history = await getHistory(collegeId, sessionId)
 
     // Generate reply via Gemini
-    const aiReply = await generateReply(history, message)
+    const aiReply = await generateReply(history, cleanMessage)
 
     // Store reply for polling (sendTextMessage in demo mode calls storeDemoReply)
     const { sendTextMessage } = await import('./whatsapp.js')
     await sendTextMessage(sessionId, aiReply)
 
     // Save to conversation history
-    await addToHistory(collegeId, sessionId, 'user',      message)
+    await addToHistory(collegeId, sessionId, 'user',      cleanMessage)
     await addToHistory(collegeId, sessionId, 'assistant', aiReply)
 
     app.log.info(`[Demo] Processed message for session ${sessionId}`)
@@ -677,7 +696,7 @@ app.get('/demo/messages/:sessionId', async (req, reply) => {
 // Middleware: validate admin secret header
 function validateAdminSecret(req, reply) {
   const secret = req.headers['x-admin-secret']
-  if (!secret || secret !== process.env.ADMIN_SECRET) {
+  if (!secret || !timingSafeCompare(secret, process.env.ADMIN_SECRET)) {
     reply.status(401).send({ error: 'Unauthorized — provide x-admin-secret header' })
     return false
   }

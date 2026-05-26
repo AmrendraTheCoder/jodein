@@ -1,93 +1,482 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { 
-  MessageSquare, 
-  Sparkles, 
-  ShieldCheck, 
-  TrendingUp, 
-  Users, 
-  ChevronRight, 
-  ArrowRight,
-  Database,
-  Terminal,
-  Zap,
-  Globe,
-  Settings,
-  Clock
+import {
+  MessageSquare, Sparkles, ShieldCheck, TrendingUp, Users,
+  ArrowRight, Database, Terminal, Zap, Globe, Clock, Bot,
+  ChevronRight, Star, Github, ExternalLink, Check, Play,
+  BarChart2, Shield, Cpu, Network, BookOpen, BellRing,
+  GraduationCap, Building2, Layers, Code2, Activity,
 } from 'lucide-react';
 
-export default function LandingPage() {
-  const [activeStep, setActiveStep] = useState(0);
-  const [simMessages, setSimMessages] = useState([
-    { sender: 'system', text: 'Hi Rahul! 👋\n\nAapka college ka WhatsApp assistant ready hai.\n\n*LNM Institute of IT* ka campus bot aapko help karega:\n• Syllabus aur timetable queries\n• Exam schedule\n• Attendance status\n• Campus information\n\nActivate karne ke liye, apna *Student ID* reply karein:\nExample: `2022CSE001`', delay: 1000 }
+/* ============================================================
+   DATA
+   ============================================================ */
+const FEATURES = [
+  {
+    icon: Users,
+    color: 'brand',
+    title: 'Bulk Student Onboarding',
+    desc: 'Drag-and-drop CSV registration. Parse E.164 phone numbers instantly and dispatch personalized WhatsApp activation messages via BullMQ.',
+    tag: 'Automation',
+  },
+  {
+    icon: Sparkles,
+    color: 'violet',
+    title: 'Gemini Flash Orchestrator',
+    desc: 'Dynamic system prompts per college tenant. Inject real student metadata, attendance, and syllabus context into each AI response in milliseconds.',
+    tag: 'AI Engine',
+  },
+  {
+    icon: BarChart2,
+    color: 'emerald',
+    title: 'Deflection Analytics',
+    desc: 'Track query deflection rates, response latency, and student engagement across every campus tenant in real time.',
+    tag: 'Analytics',
+  },
+  {
+    icon: Shield,
+    color: 'amber',
+    title: 'HMAC-Hardened Webhooks',
+    desc: 'Timing-safe SHA-256 signature verification prevents replay attacks. NoSQL injection stripping on every incoming payload.',
+    tag: 'Security',
+  },
+  {
+    icon: Network,
+    color: 'cyan',
+    title: 'ADIP Standard API',
+    desc: 'Machine-readable academic data rails. Expose structured student, course, and attendance schemas for any ERP to connect.',
+    tag: 'Protocol',
+  },
+  {
+    icon: Database,
+    color: 'rose',
+    title: 'Pinecone RAG Engine',
+    desc: 'Index syllabi and PYQs as vector embeddings. Semantic retrieval at query time reduces Gemini token costs by 10x.',
+    tag: 'RAG',
+  },
+];
+
+const STATS = [
+  { value: '84%', label: 'Query Deflection', sub: 'Avg. across campuses' },
+  { value: '<1.2s', label: 'AI Response Time', sub: 'Gemini Flash median' },
+  { value: '10k+', label: 'Active Students', sub: 'Across tenants' },
+  { value: '99.9%', label: 'Uptime SLA', sub: 'Railway + Redis' },
+];
+
+const FLOW_STEPS = [
+  { step: '01', label: 'WhatsApp API', desc: 'Meta Cloud Webhook', color: '#8b73f5', endpoint: 'POST /webhook/:collegeId' },
+  { step: '02', label: 'HMAC Verifier', desc: 'timingSafeEqual guard', color: '#22d3ee', endpoint: 'SHA-256 + rawBody' },
+  { step: '03', label: 'BullMQ Queue', desc: 'Async ingest worker', color: '#34d399', endpoint: 'Redis-backed DLQ' },
+  { step: '04', label: 'Gemini Flash', desc: 'Personalized response', color: '#fbbf24', endpoint: 'gemini-1.5-flash-latest' },
+  { step: '05', label: 'Meta Send API', desc: 'Deliver to student device', color: '#f472b6', endpoint: 'messages.send()' },
+];
+
+const SIM_FLOWS = [
+  {
+    trigger: ['2022CSE001', 'cse', 'CSE'],
+    response: `✅ Welcome, Rahul Sharma!\n\nLNMIIT Campus Bot activated.\n\nAap mujhse poochh sakte hain:\n• syllabus — semester subjects\n• timetable — class schedule\n• attendance — your status\n• exams — upcoming dates\n\nKya help chahiye? 🎓`,
+  },
+  {
+    trigger: ['attendance', 'ATTENDANCE'],
+    response: `📊 Attendance Summary — Rahul Sharma\n\n• CS-301 DBMS: 82% ✅\n• CS-302 OS: 77% ✅\n• CS-303 ADA: 68% ⚠️ Short of 75%\n\nOverall: 75.6%\n3 more ADA classes → clear ho jayega!`,
+  },
+  {
+    trigger: ['syllabus', 'SYLLABUS', 'subject'],
+    response: `📚 DBMS (CS-301) — Unit Breakdown\n\nUnit 1: ER Diagrams & Relational Model\nUnit 2: SQL & Normalization (1NF–BCNF)\nUnit 3: Transactions & Concurrency\nUnit 4: Indexing & Hashing\n\nPDF: lnmiit.ac.in/syllabus/cs-301.pdf 📄`,
+  },
+  {
+    trigger: ['exams', 'exam'],
+    response: `📅 Upcoming Exam Schedule\n\nCS-301 DBMS → June 3, 2:00 PM\nCS-302 OS → June 5, 10:00 AM\nCS-303 ADA → June 7, 2:00 PM\n\nHall Ticket: moodle.lnmiit.ac.in 🎫`,
+  },
+];
+
+/* ============================================================
+   SUBCOMPONENTS
+   ============================================================ */
+
+/** Ambient orb background */
+function AmbientOrbs() {
+  return (
+    <div className="fixed inset-0 overflow-hidden pointer-events-none z-0" aria-hidden="true">
+      <div
+        className="absolute w-[800px] h-[800px] rounded-full"
+        style={{
+          top: '-20%', left: '-15%',
+          background: 'radial-gradient(circle, rgba(109,81,232,0.12) 0%, transparent 70%)',
+          filter: 'blur(60px)',
+        }}
+      />
+      <div
+        className="absolute w-[600px] h-[600px] rounded-full"
+        style={{
+          bottom: '10%', right: '-10%',
+          background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)',
+          filter: 'blur(60px)',
+        }}
+      />
+      <div
+        className="absolute w-[400px] h-[400px] rounded-full"
+        style={{
+          top: '40%', right: '20%',
+          background: 'radial-gradient(circle, rgba(6,182,212,0.08) 0%, transparent 70%)',
+          filter: 'blur(80px)',
+        }}
+      />
+      {/* Grid */}
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundImage: 'linear-gradient(rgba(255,255,255,0.012) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.012) 1px, transparent 1px)',
+          backgroundSize: '64px 64px',
+        }}
+      />
+    </div>
+  );
+}
+
+/** WhatsApp simulator */
+function PhoneSimulator() {
+  const [messages, setMessages] = useState([
+    {
+      sender: 'bot',
+      text: `👋 Hi there!\n\nAapka campus WhatsApp bot ready hai.\n\nLNM Institute of IT ke liye:\n\n🎓 Student ID type karein activate karne ke liye\n📱 Example: 2022CSE001\n\nOr try: syllabus, attendance, exams`,
+      time: now(),
+    },
   ]);
-  const [userInput, setUserInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+  const [input, setInput] = useState('');
+  const [typing, setTyping] = useState(false);
+  const bottomRef = useRef(null);
 
-  // Phone simulation replies
-  const handleSimSend = (e) => {
+  function now() {
+    return new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  }
+
+  function getResponse(text) {
+    const t = text.toLowerCase();
+    for (const flow of SIM_FLOWS) {
+      if (flow.trigger.some((k) => t.includes(k.toLowerCase()))) return flow.response;
+    }
+    return `Aapke query ke liye ready hun!\n\nTry karo: syllabus, attendance, timetable, exams\nYa apna Student ID bhejo activate karne ke liye.`;
+  }
+
+  const send = useCallback((e) => {
     e.preventDefault();
-    if (!userInput.trim()) return;
-
-    const userText = userInput.trim();
-    setSimMessages((prev) => [...prev, { sender: 'user', text: userText }]);
-    setUserInput('');
-    setIsTyping(true);
-
+    const text = input.trim();
+    if (!text) return;
+    setInput('');
+    setMessages((prev) => [...prev, { sender: 'user', text, time: now() }]);
+    setTyping(true);
     setTimeout(() => {
-      let botResponse = '';
-      const cleanInput = userText.toUpperCase().replace(/\s+/g, '');
-      
-      if (cleanInput.includes('2022CSE001') || cleanInput.includes('CSE')) {
-        botResponse = '✅ Welcome, Rahul Sharma!\n\nAapka account activate ho gaya.\n\nAap mujhse poochh sakte hain:\n• *syllabus* — semester ke subjects\n• *timetable* — class schedule\n• *attendance* — aapki attendance\n• *exams* — upcoming exam dates\n\nKya help chahiye?';
-      } else if (cleanInput.includes('ATTENDANCE')) {
-        botResponse = '📊 *Attendance Summary for Rahul Sharma*:\n\n• CS-301 (DBMS): *82%* ✅\n• CS-302 (OS): *77%* ✅\n• CS-303 (ADA): *68%* ⚠️ (Short of 75%)\n\nOverall Attendance: *75.6%*\n_Tip: 3 more ADA classes attend karne par clear ho jayega._';
-      } else if (cleanInput.includes('SYLLABUS') || cleanInput.includes('SUBJECT')) {
-        botResponse = '📚 *DBMS (CS-301) Syllabus*:\n\nUnit 1: ER Diagrams & Relational Model\nUnit 2: SQL Queries & Normalization (1NF to BCNF)\nUnit 3: Transactions & Concurrency Control\nUnit 4: Indexing & Hashing\n\n_Syllabus PDF download karne ke liye link par click karein: https://lnmiit.ac.in/syllabus/cs-301.pdf_';
-      } else {
-        botResponse = `Aapke query ke liye main ready hun! Lekin direct academic details ke liye, please standard words use karein: *syllabus*, *timetable*, *attendance*, or *exams*.`;
-      }
+      setMessages((prev) => [...prev, { sender: 'bot', text: getResponse(text), time: now() }]);
+      setTyping(false);
+    }, 1100 + Math.random() * 400);
+  }, [input]);
 
-      setSimMessages((prev) => [...prev, { sender: 'bot', text: botResponse }]);
-      setIsTyping(false);
-    }, 1200);
-  };
+  const quickSend = useCallback((text) => {
+    setMessages((prev) => [...prev, { sender: 'user', text, time: now() }]);
+    setTyping(true);
+    setTimeout(() => {
+      setMessages((prev) => [...prev, { sender: 'bot', text: getResponse(text), time: now() }]);
+      setTyping(false);
+    }, 1100 + Math.random() * 400);
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, typing]);
 
   return (
-    <div className="relative min-h-screen bg-slate-950 text-slate-100 overflow-x-hidden">
-      {/* Decorative background glows */}
-      <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-[20%] right-[-10%] w-[40%] h-[40%] bg-emerald-500/10 rounded-full blur-[120px] pointer-events-none" />
+    <div className="relative">
+      {/* Outer glow ring */}
+      <div
+        className="absolute inset-0 rounded-[44px] animate-glow-pulse pointer-events-none"
+        style={{ boxShadow: '0 0 0 1px rgba(109,81,232,0.2), 0 0 60px rgba(109,81,232,0.15)' }}
+        aria-hidden="true"
+      />
 
-      {/* Navigation */}
-      <header className="relative z-10 border-b border-slate-900 bg-slate-950/80 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <MessageSquare className="w-5 h-5 text-slate-950 font-bold" />
+      {/* Phone frame */}
+      <div
+        className="relative w-[340px] h-[660px] rounded-[44px] flex flex-col overflow-hidden"
+        style={{
+          background: 'linear-gradient(160deg, #0f1520, #0a0f1a)',
+          border: '1px solid rgba(255,255,255,0.07)',
+          boxShadow: '0 40px 80px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.08)',
+        }}
+      >
+        {/* Notch */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-28 h-7 z-20 flex items-center justify-center"
+          style={{ background: '#0a0f1a', borderBottomLeftRadius: 20, borderBottomRightRadius: 20 }}>
+          <div className="w-14 h-1 rounded-full" style={{ background: '#1a2540' }} />
+        </div>
+
+        {/* Status bar */}
+        <div className="flex items-center justify-between px-6 pt-9 pb-2 text-[10px] text-slate-400 font-semibold">
+          <span>9:41</span>
+          <div className="flex items-center gap-1.5">
+            <div className="flex gap-0.5 items-end h-3">
+              {[2, 3, 4, 3].map((h, i) => (
+                <div key={i} className="w-1 rounded-sm bg-slate-400" style={{ height: `${h * 3}px` }} />
+              ))}
             </div>
-            <div>
-              <span className="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">Jodein</span>
-              <span className="text-xs block text-slate-500 font-semibold uppercase tracking-wider">Campus Intelligence</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M1.5 8.5C5.36 4.93 10.45 3 15 3s9.64 1.93 13.5 5.5L27 10.5A17.5 17.5 0 0 0 15 6 17.5 17.5 0 0 0 3 10.5L1.5 8.5z" opacity=".5"/></svg>
+            <div className="flex items-center gap-0.5">
+              <div className="w-5 h-2.5 rounded-sm border border-slate-400 flex items-center px-0.5">
+                <div className="h-1.5 w-3 rounded-sm bg-emerald-400" />
+              </div>
             </div>
           </div>
-          <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
-            <a href="#features" className="hover:text-slate-100 transition-colors">Features</a>
-            <a href="#demo" className="hover:text-slate-100 transition-colors">Interactive Demo</a>
-            <a href="#architecture" className="hover:text-slate-100 transition-colors">Architecture</a>
-          </nav>
-          <div className="flex items-center gap-4">
-            <Link 
-              href="/admin" 
-              className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 hover:border-slate-700 text-sm font-semibold transition-all flex items-center gap-2"
+        </div>
+
+        {/* WhatsApp header */}
+        <div className="flex items-center gap-3 px-4 py-2.5 border-b" style={{ borderColor: 'rgba(255,255,255,0.05)', background: 'rgba(6,9,15,0.4)' }}>
+          <div
+            className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
+            style={{ background: 'linear-gradient(135deg, #6d51e8, #10b981)' }}
+          >J</div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[13px] font-bold text-white leading-tight">Jodein Assistant</p>
+            <div className="flex items-center gap-1.5">
+              <span className="dot-live" />
+              <span className="text-[10px] text-slate-400">online · encrypted</span>
+            </div>
+          </div>
+          <div className="flex gap-3 text-slate-400">
+            <Activity className="w-4 h-4" />
+          </div>
+        </div>
+
+        {/* Chat body */}
+        <div
+          className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5"
+          style={{
+            background: 'radial-gradient(ellipse at bottom, rgba(109,81,232,0.04) 0%, transparent 60%), #06090f',
+          }}
+        >
+          {messages.map((msg, i) => (
+            <div key={i} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className="max-w-[82%] rounded-2xl px-3 py-2 text-[11px] leading-relaxed"
+                style={
+                  msg.sender === 'user'
+                    ? {
+                        background: 'linear-gradient(135deg, #6d51e8, #5538d4)',
+                        color: 'white',
+                        borderBottomRightRadius: 4,
+                        boxShadow: '0 2px 8px rgba(109,81,232,0.3)',
+                      }
+                    : {
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.06)',
+                        color: '#cbd5e1',
+                        borderBottomLeftRadius: 4,
+                      }
+                }
+              >
+                <span className="block whitespace-pre-wrap leading-relaxed">{msg.text}</span>
+                <div className={`text-[9px] mt-1 ${msg.sender === 'user' ? 'text-indigo-200 text-right' : 'text-slate-600'}`}>
+                  {msg.time} {msg.sender === 'user' && '✓✓'}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {typing && (
+            <div className="flex justify-start">
+              <div
+                className="px-4 py-3 rounded-2xl"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', borderBottomLeftRadius: 4 }}
+              >
+                <div className="flex gap-1 items-center h-3">
+                  {[0, 150, 300].map((d, i) => (
+                    <span
+                      key={i}
+                      className="w-1.5 h-1.5 rounded-full bg-slate-500"
+                      style={{ animation: `bounce-dots 1.2s ease-in-out infinite ${d}ms` }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Quick replies */}
+        <div className="px-3 py-2 flex gap-2 overflow-x-auto" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+          {['2022CSE001', 'attendance', 'syllabus', 'exams'].map((q) => (
+            <button
+              key={q}
+              onClick={() => quickSend(q)}
+              disabled={typing}
+              className="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-semibold transition-all disabled:opacity-50"
+              style={{ background: 'rgba(109,81,232,0.12)', color: '#a99bff', border: '1px solid rgba(109,81,232,0.2)' }}
             >
-              HOD Login
-            </Link>
-            <Link 
-              href="/admin" 
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-indigo-650 hover:from-indigo-650 hover:to-indigo-750 text-white text-sm font-semibold shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/35 transition-all flex items-center gap-2"
+              {q}
+            </button>
+          ))}
+        </div>
+
+        {/* Input */}
+        <form
+          onSubmit={send}
+          className="flex items-center gap-2 px-3 pb-5 pt-2"
+          style={{ background: 'rgba(6,9,15,0.6)' }}
+        >
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Message..."
+            className="flex-1 input-dark px-3.5 py-2 text-[12px]"
+            style={{ borderRadius: 20 }}
+            id="sim-input"
+          />
+          <button
+            type="submit"
+            disabled={typing}
+            className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-all"
+            style={{ background: 'linear-gradient(135deg, #6d51e8, #5538d4)', boxShadow: '0 4px 12px rgba(109,81,232,0.4)' }}
+            aria-label="Send message"
+          >
+            <ArrowRight className="w-4 h-4 text-white" />
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/** Feature card */
+function FeatureCard({ icon: Icon, color, title, desc, tag, index }) {
+  const colorMap = {
+    brand: { bg: 'rgba(109,81,232,0.1)', border: 'rgba(109,81,232,0.2)', text: '#a99bff', glow: 'rgba(109,81,232,0.15)' },
+    violet: { bg: 'rgba(167,139,250,0.1)', border: 'rgba(167,139,250,0.2)', text: '#c4b5fd', glow: 'rgba(167,139,250,0.15)' },
+    emerald: { bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.18)', text: '#34d399', glow: 'rgba(16,185,129,0.12)' },
+    amber: { bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.18)', text: '#fbbf24', glow: 'rgba(245,158,11,0.12)' },
+    cyan: { bg: 'rgba(6,182,212,0.08)', border: 'rgba(6,182,212,0.18)', text: '#22d3ee', glow: 'rgba(6,182,212,0.12)' },
+    rose: { bg: 'rgba(244,63,94,0.08)', border: 'rgba(244,63,94,0.18)', text: '#fb7185', glow: 'rgba(244,63,94,0.12)' },
+  };
+  const c = colorMap[color];
+
+  return (
+    <div
+      className="group relative p-6 rounded-2xl transition-all duration-300 cursor-default"
+      style={{
+        background: 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
+        border: '1px solid rgba(255,255,255,0.06)',
+        animationDelay: `${index * 100}ms`,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = c.border;
+        e.currentTarget.style.boxShadow = `0 8px 40px rgba(0,0,0,0.4), 0 0 30px ${c.glow}`;
+        e.currentTarget.style.transform = 'translateY(-4px)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
+        e.currentTarget.style.boxShadow = 'none';
+        e.currentTarget.style.transform = 'translateY(0)';
+      }}
+    >
+      <div
+        className="w-11 h-11 rounded-xl flex items-center justify-center mb-5"
+        style={{ background: c.bg, border: `1px solid ${c.border}` }}
+      >
+        <Icon className="w-5 h-5" style={{ color: c.text }} />
+      </div>
+
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-[15px] font-bold text-white">{title}</h3>
+        <span className="badge text-[9px] px-2 py-0.5" style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
+          {tag}
+        </span>
+      </div>
+      <p className="text-[13px] text-slate-400 leading-relaxed">{desc}</p>
+    </div>
+  );
+}
+
+/* ============================================================
+   MAIN PAGE
+   ============================================================ */
+export default function LandingPage() {
+  const [scrolled, setScrolled] = useState(false);
+  const [activeFlowStep, setActiveFlowStep] = useState(0);
+
+  useEffect(() => {
+    const handleScroll = () => setScrolled(window.scrollY > 20);
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const t = setInterval(() => setActiveFlowStep((p) => (p + 1) % FLOW_STEPS.length), 2000);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <div className="relative min-h-screen text-slate-100 overflow-x-hidden">
+      <AmbientOrbs />
+
+      {/* ── NAV ── */}
+      <header
+        className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${
+          scrolled ? 'py-3' : 'py-5'
+        }`}
+        style={{
+          background: scrolled ? 'rgba(2,4,8,0.85)' : 'transparent',
+          backdropFilter: scrolled ? 'blur(20px)' : 'none',
+          borderBottom: scrolled ? '1px solid rgba(255,255,255,0.06)' : '1px solid transparent',
+        }}
+      >
+        <div className="max-w-7xl mx-auto px-6 flex items-center justify-between">
+          {/* Logo */}
+          <div className="flex items-center gap-3">
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center"
+              style={{
+                background: 'linear-gradient(135deg, #6d51e8, #10b981)',
+                boxShadow: '0 4px 16px rgba(109,81,232,0.4)',
+              }}
+            >
+              <MessageSquare className="w-4.5 h-4.5 text-white" />
+            </div>
+            <div>
+              <span className="text-[17px] font-extrabold tracking-tight text-white">Jodein</span>
+              <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500 block leading-none mt-0.5">Campus Intelligence</span>
+            </div>
+          </div>
+
+          {/* Nav links */}
+          <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
+            {['Features', 'Demo', 'Architecture', 'Open Source'].map((l) => (
+              <a
+                key={l}
+                href={`#${l.toLowerCase().replace(' ', '-')}`}
+                className="hover:text-white transition-colors duration-200"
+              >
+                {l}
+              </a>
+            ))}
+          </nav>
+
+          {/* CTAs */}
+          <div className="flex items-center gap-3">
+            <a
+              href="https://github.com/AmrendraTheCoder/jodein"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-slate-400 hover:text-white transition-colors"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+            >
+              <Github className="w-4 h-4" />
+              GitHub
+            </a>
+            <Link
+              href="/admin"
+              id="nav-admin-cta"
+              className="btn-primary text-sm py-2 px-5"
             >
               Admin Portal
               <ArrowRight className="w-4 h-4" />
@@ -96,233 +485,258 @@ export default function LandingPage() {
         </div>
       </header>
 
-      {/* Hero Section */}
-      <section className="relative z-10 max-w-7xl mx-auto px-6 pt-16 pb-24 grid grid-cols-1 lg:grid-cols-12 gap-16 items-center">
-        <div className="lg:col-span-7 flex flex-col justify-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 mb-6 w-fit">
-            <Sparkles className="w-4 h-4 text-indigo-400" />
-            <span className="text-xs font-semibold text-indigo-300">Next-Gen Campus Intelligence Platform</span>
-          </div>
-          <h1 className="text-5xl md:text-6xl font-extrabold tracking-tight leading-[1.1] mb-6">
-            Bring Your Campus Intelligence to <span className="bg-gradient-to-r from-indigo-400 via-purple-400 to-emerald-400 bg-clip-text text-transparent">WhatsApp</span>
-          </h1>
-          <p className="text-lg text-slate-400 mb-8 max-w-xl leading-relaxed">
-            Jodein connects students directly with academic records, timetables, and automated alerts on WhatsApp. Powered by high-speed generative AI, designed for instant queries and massive deflection rates.
-          </p>
-          <div className="flex flex-wrap gap-4">
-            <Link 
-              href="/admin"
-              className="px-8 py-4 rounded-2xl bg-gradient-to-r from-indigo-500 to-emerald-500 text-slate-950 font-bold hover:shadow-xl hover:shadow-indigo-500/10 transition-all flex items-center gap-3 text-base"
+      {/* ── HERO ── */}
+      <section className="relative z-10 min-h-screen flex flex-col justify-center pt-24 pb-20">
+        <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+
+          {/* Left: Copy */}
+          <div className="animate-slide-up">
+            {/* Badge */}
+            <div
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full mb-7 text-[11px] font-bold"
+              style={{
+                background: 'rgba(109,81,232,0.1)',
+                border: '1px solid rgba(109,81,232,0.25)',
+                color: '#a99bff',
+              }}
             >
-              Configure Campus Bot
-              <ArrowRight className="w-5 h-5 text-slate-950" />
-            </Link>
-            <a 
-              href="#demo"
-              className="px-8 py-4 rounded-2xl bg-slate-900/60 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 font-semibold transition-all flex items-center gap-2 text-base"
-            >
-              Watch Interactive Demo
-            </a>
+              <Sparkles className="w-3.5 h-3.5" />
+              ADIP Standard · Gemini Flash · Open Source
+            </div>
+
+            {/* H1 */}
+            <h1 className="text-5xl md:text-6xl xl:text-7xl font-extrabold tracking-tight leading-[1.05] mb-6">
+              <span className="text-white">Campus AI on</span>
+              <br />
+              <span
+                style={{
+                  background: 'linear-gradient(135deg, #f1f5f9 0%, #a99bff 40%, #6d51e8 100%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}
+              >
+                WhatsApp
+              </span>
+              <span className="text-white"> — </span>
+              <br />
+              <span className="text-white">Instantly.</span>
+            </h1>
+
+            <p className="text-lg text-slate-400 leading-relaxed max-w-lg mb-9">
+              Jodein connects 10,000+ students to real-time syllabus, attendance, and exam data via WhatsApp — no app downloads. Powered by <strong className="text-slate-200">Gemini Flash</strong> and the open <strong className="text-slate-200">ADIP Protocol</strong>.
+            </p>
+
+            {/* CTA row */}
+            <div className="flex flex-wrap gap-4 mb-12">
+              <Link href="/admin" id="hero-primary-cta" className="btn-primary">
+                Configure Bot
+                <ArrowRight className="w-4.5 h-4.5" />
+              </Link>
+              <a href="#demo" className="btn-secondary">
+                <Play className="w-4 h-4" />
+                Live Demo
+              </a>
+            </div>
+
+            {/* Social proof row */}
+            <div className="flex items-center gap-4 text-xs text-slate-500">
+              <div className="flex -space-x-2">
+                {['LN', 'PC', 'DT', 'VV'].map((abbr, i) => (
+                  <div
+                    key={i}
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold text-white border-2 border-[#020408]"
+                    style={{ background: ['#6d51e8', '#10b981', '#06b6d4', '#f59e0b'][i] }}
+                  >
+                    {abbr}
+                  </div>
+                ))}
+              </div>
+              <span>4 colleges live · <span className="text-emerald-400 font-semibold">10,000+ students</span> served</span>
+            </div>
           </div>
 
-          {/* Quick Metrics */}
-          <div className="grid grid-cols-3 gap-8 border-t border-slate-900 mt-16 pt-8 max-w-lg">
-            <div>
-              <span className="text-3xl font-extrabold text-white block">84%</span>
-              <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider block mt-1">Deflection Rate</span>
-            </div>
-            <div>
-              <span className="text-3xl font-extrabold text-white block">&lt; 1.2s</span>
-              <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider block mt-1">AI Response Time</span>
-            </div>
-            <div>
-              <span className="text-3xl font-extrabold text-white block">10k+</span>
-              <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider block mt-1">Active Students</span>
-            </div>
+          {/* Right: Phone Simulator */}
+          <div id="demo" className="flex justify-center lg:justify-end animate-fade-in">
+            <PhoneSimulator />
           </div>
         </div>
 
-        {/* WhatsApp Mobile Simulator */}
-        <div id="demo" className="lg:col-span-5 flex justify-center">
-          <div className="w-[360px] h-[640px] rounded-[40px] bg-slate-900 border-[8px] border-slate-800 shadow-2xl relative flex flex-col overflow-hidden">
-            {/* Phone Speaker/Camera Notch */}
-            <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-32 h-6 bg-slate-800 rounded-b-xl z-20 flex items-center justify-center">
-              <div className="w-12 h-1 bg-slate-950 rounded-full" />
-            </div>
-
-            {/* WhatsApp Header */}
-            <div className="bg-slate-900 border-b border-slate-850 px-4 pt-8 pb-3 flex items-center gap-3 relative z-10">
-              <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-500 to-emerald-400 flex items-center justify-center font-bold text-slate-950 text-sm">
-                J
-              </div>
-              <div>
-                <h4 className="text-sm font-bold text-white leading-tight">Jodein Assistant</h4>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] text-slate-400">online</span>
-                </div>
-              </div>
-            </div>
-
-            {/* WhatsApp Chat Body */}
-            <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-[url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')] bg-opacity-5">
-              {simMessages.map((msg, idx) => (
-                <div 
-                  key={idx} 
-                  className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed shadow-sm ${
-                    msg.sender === 'user' 
-                      ? 'bg-indigo-650 text-white ml-auto rounded-tr-none' 
-                      : msg.sender === 'system' || msg.sender === 'bot'
-                      ? 'bg-slate-850 text-slate-200 mr-auto rounded-tl-none border border-slate-800'
-                      : 'bg-slate-900/60 text-slate-400 mx-auto text-center py-1.5 rounded-lg border border-slate-850'
-                  }`}
-                >
-                  <pre className="font-sans whitespace-pre-wrap">{msg.text}</pre>
-                </div>
-              ))}
-              {isTyping && (
-                <div className="bg-slate-850 text-slate-400 mr-auto rounded-2xl rounded-tl-none px-3.5 py-2.5 text-xs border border-slate-800 w-fit flex gap-1 items-center">
-                  <span className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-              )}
-            </div>
-
-            {/* WhatsApp Input Field */}
-            <form onSubmit={handleSimSend} className="bg-slate-900 p-3 border-t border-slate-850 flex gap-2 items-center">
-              <input 
-                type="text" 
-                value={userInput}
-                onChange={(e) => setUserInput(e.target.value)}
-                placeholder="Type '2022CSE001' or 'attendance'..." 
-                className="flex-1 bg-slate-950 border border-slate-800 rounded-full px-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-              />
-              <button 
-                type="submit" 
-                className="w-8 h-8 rounded-full bg-indigo-500 hover:bg-indigo-600 flex items-center justify-center text-slate-950 font-bold text-xs"
+        {/* Stats row */}
+        <div className="max-w-7xl mx-auto px-6 mt-20">
+          <div
+            className="grid grid-cols-2 md:grid-cols-4 gap-px overflow-hidden rounded-2xl"
+            style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)' }}
+          >
+            {STATS.map(({ value, label, sub }, i) => (
+              <div
+                key={i}
+                className="px-8 py-7 text-center hover:bg-white/[0.02] transition-colors"
+                style={{ background: 'rgba(255,255,255,0.01)' }}
               >
-                ➔
-              </button>
-            </form>
+                <div
+                  className="text-3xl font-extrabold mb-1"
+                  style={{
+                    background: 'linear-gradient(135deg, #fff, #a99bff)',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                  }}
+                >
+                  {value}
+                </div>
+                <div className="text-[13px] font-semibold text-white mb-0.5">{label}</div>
+                <div className="text-[11px] text-slate-500">{sub}</div>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section id="features" className="relative z-10 border-t border-slate-900 bg-slate-950/50 py-24">
+      {/* ── FEATURES ── */}
+      <section id="features" className="relative z-10 py-28">
         <div className="max-w-7xl mx-auto px-6">
           <div className="text-center max-w-2xl mx-auto mb-16">
-            <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight mb-4">Everything You Need to Manage Student Support</h2>
-            <p className="text-slate-400 leading-relaxed">
-              Equip HODs, academic coordinators, and admins with a premium dashboard to upload CSV student registers, tweak AI prompts, and track deflection graphs.
+            <div className="badge badge-brand mx-auto mb-5">Platform Capabilities</div>
+            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-white">
+              Enterprise-grade campus stack
+            </h2>
+            <p className="text-slate-400 text-lg leading-relaxed">
+              Every feature built for production: hardened security, multi-tenant isolation, and cost-optimal AI.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Feature 1 */}
-            <div className="p-8 rounded-2xl glass-card">
-              <div className="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-6">
-                <Users className="w-6 h-6 text-indigo-400" />
-              </div>
-              <h3 className="text-xl font-bold mb-3 text-white">Bulk Onboarding</h3>
-              <p className="text-sm text-slate-400 leading-relaxed">
-                Drag-and-drop Student Registries via simple CSV. Automate personalized WhatsApp activation greetings instantly with robust E.164 phone parsing.
-              </p>
-            </div>
-
-            {/* Feature 2 */}
-            <div className="p-8 rounded-2xl glass-card">
-              <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-6">
-                <Sparkles className="w-6 h-6 text-purple-400" />
-              </div>
-              <h3 className="text-xl font-bold mb-3 text-white">Gemini-Flash Orchestrator</h3>
-              <p className="text-sm text-slate-400 leading-relaxed">
-                Leverage advanced LLMs configured dynamically per college tenant. Personalize context windows and system prompts to direct AI persona.
-              </p>
-            </div>
-
-            {/* Feature 3 */}
-            <div className="p-8 rounded-2xl glass-card">
-              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-6">
-                <TrendingUp className="w-6 h-6 text-emerald-400" />
-              </div>
-              <h3 className="text-xl font-bold mb-3 text-white">Deflection Analytics</h3>
-              <p className="text-sm text-slate-400 leading-relaxed">
-                Track how many queries are successfully answered by the AI bot, minimizing workload on administrative office desks up to 84%.
-              </p>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+            {FEATURES.map((f, i) => (
+              <FeatureCard key={i} {...f} index={i} />
+            ))}
           </div>
         </div>
       </section>
 
-      {/* Architecture Section */}
-      <section id="architecture" className="relative z-10 border-t border-slate-900 py-24">
+      {/* ── ARCHITECTURE / FLOW ── */}
+      <section id="architecture" className="relative z-10 py-28">
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ background: 'radial-gradient(ellipse 80% 60% at 50% 50%, rgba(109,81,232,0.06) 0%, transparent 70%)' }}
+          aria-hidden="true"
+        />
         <div className="max-w-7xl mx-auto px-6">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 items-center">
-            <div className="lg:col-span-5">
-              <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight mb-6">Enterprise Multi-Tenant Architecture</h2>
-              <p className="text-slate-400 leading-relaxed mb-6">
-                Jodein runs on a fast, asynchronous processing queue backed by BullMQ and Redis. Incoming WhatsApp webhooks are parsed, queued, and resolved by worker services in under 1 second.
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+
+            {/* Left copy */}
+            <div>
+              <div className="badge badge-brand mb-5">Architecture</div>
+              <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-6 text-white">
+                Sub-second async<br />message pipeline
+              </h2>
+              <p className="text-slate-400 text-base leading-relaxed mb-8">
+                Every WhatsApp message enters a hardened BullMQ queue, verified with HMAC-SHA256, enriched by MongoDB student profiles, and answered by Gemini Flash — all in under 1.2 seconds.
               </p>
-              
+
               <div className="space-y-4">
-                <div className="flex items-start gap-4">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0 mt-1">
-                    <Database className="w-4 h-4 text-indigo-400" />
+                {[
+                  { icon: ShieldCheck, color: '#34d399', title: 'Zero-trust webhook verification', desc: 'Timing-safe HMAC prevents signature spoofing' },
+                  { icon: Database, color: '#8b73f5', title: 'Multi-tenant data isolation', desc: 'collegeId partitioning on every MongoDB query' },
+                  { icon: Zap, color: '#fbbf24', title: 'BullMQ Dead Letter Queue', desc: 'Failed jobs automatically retried with exponential backoff' },
+                ].map(({ icon: Icon, color, title, desc }, i) => (
+                  <div key={i} className="flex gap-4 items-start">
+                    <div
+                      className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ background: `${color}15`, border: `1px solid ${color}30` }}
+                    >
+                      <Icon className="w-4 h-4" style={{ color }} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white">{title}</p>
+                      <p className="text-[12px] text-slate-500 mt-0.5">{desc}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-white">Dynamic Configuration Cache</h4>
-                    <p className="text-xs text-slate-400 mt-1">Mongoose dynamic configurations are cached in-memory with a 5-min TTL to sustain high message volumes without database stress.</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-start gap-4">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0 mt-1">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-white">Webhook Verification Handshake</h4>
-                    <p className="text-xs text-slate-400 mt-1">Seamless Meta integration including raw body hash validation for reliable message delivery security.</p>
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
 
-            <div className="lg:col-span-7">
-              {/* Interactive Architecture Flow Graph */}
-              <div className="rounded-3xl border border-slate-900 bg-slate-900/20 p-8 glass">
-                <div className="flex items-center justify-between border-b border-slate-900 pb-4 mb-6">
+            {/* Right: animated flow diagram */}
+            <div id="open-source">
+              <div
+                className="rounded-3xl p-6"
+                style={{
+                  background: 'rgba(6,9,15,0.8)',
+                  border: '1px solid rgba(255,255,255,0.07)',
+                  backdropFilter: 'blur(20px)',
+                  boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+                }}
+              >
+                {/* Terminal header */}
+                <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center gap-2">
-                    <Terminal className="w-4 h-4 text-slate-400" />
-                    <span className="text-xs font-mono text-slate-400">jodein-system-flow.dot</span>
+                    <div className="terminal-dot" style={{ background: '#f87171' }} />
+                    <div className="terminal-dot" style={{ background: '#fbbf24' }} />
+                    <div className="terminal-dot" style={{ background: '#34d399' }} />
+                    <span className="text-xs font-mono text-slate-500 ml-2">jodein-pipeline.flow</span>
                   </div>
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 text-[10px] font-semibold text-emerald-400">
-                    Active
+                  <span className="badge badge-success text-[9px]">
+                    <span className="dot-live mr-1" /> Live
                   </span>
                 </div>
 
-                <div className="space-y-6 font-mono text-xs text-slate-300">
-                  <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/60 border border-slate-850">
-                    <span className="text-indigo-400">1. WhatsApp API (Meta Cloud Webhook)</span>
-                    <span className="text-slate-500">➔ POST /webhook/:collegeId</span>
+                {/* Flow steps */}
+                <div className="space-y-3">
+                  {FLOW_STEPS.map((step, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-4 p-3.5 rounded-xl transition-all duration-500"
+                      style={{
+                        background: i === activeFlowStep ? `${step.color}0d` : 'rgba(255,255,255,0.02)',
+                        border: `1px solid ${i === activeFlowStep ? `${step.color}30` : 'rgba(255,255,255,0.04)'}`,
+                        boxShadow: i === activeFlowStep ? `0 0 20px ${step.color}15` : 'none',
+                      }}
+                    >
+                      <div
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-mono font-bold shrink-0 transition-all"
+                        style={{
+                          background: i === activeFlowStep ? step.color : 'rgba(255,255,255,0.04)',
+                          color: i === activeFlowStep ? '#020408' : '#475569',
+                        }}
+                      >
+                        {step.step}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className="text-[13px] font-bold transition-colors"
+                          style={{ color: i === activeFlowStep ? step.color : '#94a3b8' }}
+                        >
+                          {step.label}
+                        </p>
+                        <p className="text-[10px] text-slate-600">{step.desc}</p>
+                      </div>
+                      <code
+                        className="text-[9px] font-mono shrink-0 hidden sm:block"
+                        style={{ color: i === activeFlowStep ? step.color : '#334155', opacity: i === activeFlowStep ? 1 : 0.6 }}
+                      >
+                        {step.endpoint}
+                      </code>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Throughput indicator */}
+                <div
+                  className="mt-5 flex items-center justify-between p-3 rounded-xl"
+                  style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)' }}
+                >
+                  <div className="flex items-center gap-2 text-xs text-emerald-400 font-semibold">
+                    <Activity className="w-3.5 h-3.5" />
+                    Throughput
                   </div>
-                  <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/60 border border-slate-850 ml-4 border-l-2 border-l-indigo-500">
-                    <span className="text-purple-400">2. Fastify Webhook Handler</span>
-                    <span className="text-slate-500">➔ Queue job to BullMQ</span>
+                  <div className="flex gap-1.5 items-end h-5">
+                    {[60, 80, 55, 90, 70, 85, 95, 75, 88].map((h, i) => (
+                      <div
+                        key={i}
+                        className="w-1 rounded-t"
+                        style={{ height: `${h * 0.2}px`, background: 'linear-gradient(to top, #059669, #34d399)', opacity: 0.8 }}
+                      />
+                    ))}
                   </div>
-                  <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/60 border border-slate-850 ml-8 border-l-2 border-l-purple-500">
-                    <span className="text-indigo-300">3. BullMQ Queue Worker</span>
-                    <span className="text-slate-500">➔ Ingest & verify student phone</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/60 border border-slate-850 ml-12 border-l-2 border-l-pink-500">
-                    <span className="text-emerald-400">4. Gemini Flash AI Engine</span>
-                    <span className="text-slate-500">➔ Personalized prompt generation</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/60 border border-slate-850 ml-8 border-l-2 border-l-indigo-500">
-                    <span className="text-slate-300">5. Meta Outgoing Cloud API</span>
-                    <span className="text-slate-500">➔ Deliver reply to user device</span>
-                  </div>
+                  <span className="text-[11px] text-emerald-400 font-mono font-bold">~840 msg/min</span>
                 </div>
               </div>
             </div>
@@ -330,22 +744,72 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950 py-12 relative z-10 text-slate-500 text-xs font-medium">
-        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg bg-gradient-to-tr from-indigo-500 to-emerald-400 flex items-center justify-center">
-              <MessageSquare className="w-3.5 h-3.5 text-slate-950" />
+      {/* ── CTA BANNER ── */}
+      <section className="relative z-10 py-24">
+        <div className="max-w-5xl mx-auto px-6">
+          <div
+            className="relative rounded-3xl p-12 text-center overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, rgba(109,81,232,0.15) 0%, rgba(16,185,129,0.08) 100%)',
+              border: '1px solid rgba(109,81,232,0.25)',
+            }}
+          >
+            {/* Glow */}
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(109,81,232,0.2) 0%, transparent 60%)' }}
+              aria-hidden="true"
+            />
+
+            <div className="relative">
+              <div className="badge badge-brand mx-auto mb-5">Free & Open Source</div>
+              <h2 className="text-4xl md:text-5xl font-extrabold text-white mb-4 tracking-tight">
+                Ready to deploy?
+              </h2>
+              <p className="text-slate-400 text-lg max-w-xl mx-auto mb-9">
+                Self-host in minutes on Railway. Full source code on GitHub. ADIP standard fully documented.
+              </p>
+              <div className="flex flex-wrap justify-center gap-4">
+                <Link href="/admin" id="bottom-cta-admin" className="btn-primary">
+                  Open Admin Panel
+                  <ArrowRight className="w-4.5 h-4.5" />
+                </Link>
+                <a
+                  href="https://github.com/AmrendraTheCoder/jodein"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-secondary"
+                >
+                  <Github className="w-4 h-4" />
+                  View Source
+                </a>
+              </div>
             </div>
-            <span className="text-sm font-bold text-slate-400">Jodein Dashboard</span>
           </div>
-          <div>
-            © {new Date().getFullYear()} Jodein. Premium Open-Source Campus Assistant. All rights reserved.
+        </div>
+      </section>
+
+      {/* ── FOOTER ── */}
+      <footer className="relative z-10 border-t py-12" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-2.5">
+            <div
+              className="w-7 h-7 rounded-lg flex items-center justify-center"
+              style={{ background: 'linear-gradient(135deg, #6d51e8, #10b981)' }}
+            >
+              <MessageSquare className="w-3.5 h-3.5 text-white" />
+            </div>
+            <span className="text-sm font-bold text-slate-400">Jodein</span>
           </div>
-          <div className="flex gap-6">
-            <a href="#" className="hover:text-slate-300">Privacy Policy</a>
-            <a href="#" className="hover:text-slate-300">Terms of Service</a>
-            <a href="#" className="hover:text-slate-300">GitHub</a>
+          <p className="text-xs text-slate-600 text-center">
+            © {new Date().getFullYear()} Jodein — ADIP Campus Intelligence. MIT License. Built in India 🇮🇳
+          </p>
+          <div className="flex gap-6 text-xs text-slate-500">
+            <a href="#" className="hover:text-slate-300 transition-colors">Privacy</a>
+            <a href="#" className="hover:text-slate-300 transition-colors">Terms</a>
+            <a href="https://github.com/AmrendraTheCoder/jodein" target="_blank" rel="noopener noreferrer" className="hover:text-slate-300 transition-colors flex items-center gap-1">
+              <Github className="w-3 h-3" /> GitHub
+            </a>
           </div>
         </div>
       </footer>
